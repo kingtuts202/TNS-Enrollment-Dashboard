@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>TNS Admissions Dashboard (Custom Aid)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background: #f4f6fa; }
+    h1 { margin: 0 0 10px; }
+    .card { background:#fff; border:1px solid #ccc; border-radius:10px; padding:16px; margin-bottom:20px; }
+    label { display:block; margin:6px 0 2px; font-size:14px; color:#444; }
+    input { padding:6px; margin-bottom:8px; }
+    button { padding:8px 12px; border-radius:6px; border:1px solid #ccc; cursor:pointer; }
+    button:hover { background:#eee; }
+    .row { display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; }
+    .field { display:flex; flex-direction:column; }
+    .student { border:1px solid #ddd; padding:10px; margin:6px 0; border-radius:6px; background:#fafafa; }
+    .student header { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
+    .stat { font-weight:bold; margin-top:8px; }
+    .warn { color:#c0392b; font-weight:bold; }
+    .ok { color:#0a8a4d; font-weight:bold; }
+    .muted { color:#6c7a96; font-size:12px; }
+  </style>
+</head>
+<body>
+  <h1>TNS Enrollment & Revenue Dashboard (Custom Aid)</h1>
+
+  <div class="card">
+    <h2>Global Settings</h2>
+    <div class="row">
+      <div class="field">
+        <label>Full-time tuition ($)</label>
+        <input id="tuition" type="number" value="15500" min="0" step="50">
+      </div>
+      <div class="field">
+        <label>Total aid budget ($)</label>
+        <input id="aidBudget" type="number" value="15500" min="0" step="50">
+      </div>
+      <div class="field">
+        <label>Target full-pay students (FPE)</label>
+        <input id="target" type="number" value="20" min="0" step="1">
+      </div>
+    </div>
+    <div class="muted">Tip: Aid award is the **discount** off tuition per aid student (e.g., $7,750 = half-tuition scholarship).</div>
+  </div>
+
+  <div class="card">
+    <h2>Students</h2>
+    <div id="students"></div>
+    <div class="row">
+      <button id="addFullPay">+ Add Full-Pay</button>
+      <button id="addAid">+ Add Aid</button>
+      <button id="addHS1">+ Add Homeschool (1 class)</button>
+      <button id="addHS2">+ Add Homeschool (2 classes)</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Results</h2>
+    <div id="revenue" class="stat"></div>
+    <div id="aidUse" class="stat"></div>
+    <div id="fpe" class="stat"></div>
+    <div id="gap" class="stat"></div>
+    <div id="aidWarning" class="stat"></div>
+  </div>
+
+  <script>
+    // --- Elements
+    const tuitionEl = document.getElementById('tuition');
+    const aidBudgetEl = document.getElementById('aidBudget');
+    const targetEl = document.getElementById('target');
+    const studentsEl = document.getElementById('students');
+    const revenueEl = document.getElementById('revenue');
+    const aidUseEl = document.getElementById('aidUse');
+    const fpeEl = document.getElementById('fpe');
+    const gapEl = document.getElementById('gap');
+    const aidWarningEl = document.getElementById('aidWarning');
+
+    // --- Initial state (your current facts):
+    // 5 full-time next year (4 paying + 1 aid), 1 homeschooler taking 2 classes, aid pool = $15,500,
+    // with half ($7,750) already committed to the returning aid student.
+    let students = [
+      { type: 'fullPay' },
+      { type: 'fullPay' },
+      { type: 'fullPay' },
+      { type: 'fullPay' },
+      { type: 'aid', aidAward: 7750 }, // returning student on half award
+      { type: 'hs2' }
+    ];
+
+    // --- Render list
+    function renderStudents() {
+      studentsEl.innerHTML = '';
+      students.forEach((s, i) => {
+        const div = document.createElement('div');
+        div.className = 'student';
+        const title = labelFor(s.type);
+        div.innerHTML = `
+          <header>
+            <strong>${title}</strong>
+            <button onclick="removeStudent(${i})">Remove</button>
+          </header>
+          ${s.type === 'aid' ? aidEditorHTML(i, s) : ''}
+          ${s.type === 'hs1' || s.type === 'hs2' ? '<div class="muted">Homeschool tuition is fixed ($1,500/class, max 2 classes).</div>' : ''}
+        `;
+        studentsEl.appendChild(div);
+
+        if (s.type === 'aid') {
+          const input = div.querySelector('[data-key="aidAward"]');
+          input.addEventListener('input', () => {
+            let val = Number(input.value) || 0;
+            if (val < 0) val = 0;
+            const tuition = Number(tuitionEl.value) || 0;
+            if (val > tuition) val = tuition; // cannot discount beyond tuition
+            students[i].aidAward = val;
+            input.value = val;
+            update();
+          });
+        }
+      });
+      update();
+    }
+
+    function aidEditorHTML(index, s) {
+      const v = typeof s.aidAward === 'number' ? s.aidAward : 0;
+      return `
+        <div class="row">
+          <div class="field">
+            <label>Aid award ($ discount off tuition)</label>
+            <input type="number" min="0" step="50" value="${v}" data-key="aidAward">
+          </div>
+          <div class="field">
+            <label>Net tuition (read-only)</label>
+            <input type="number" value="${Math.max(0, (Number(tuitionEl.value)||0) - v)}" disabled>
+          </div>
+        </div>
+        <div class="muted">Example: $7,750 = half-tuition scholarship on $15,500 tuition.</div>
+      `;
+    }
+
+    function labelFor(type) {
+      if (type === 'fullPay') return 'Full-Pay Student';
+      if (type === 'aid') return 'Aid Student (custom award)';
+      if (type === 'hs1') return 'Homeschool (1 class)';
+      if (type === 'hs2') return 'Homeschool (2 classes)';
+      return '';
+    }
+
+    // --- Add/remove
+    function removeStudent(index) {
+      students.splice(index, 1);
+      renderStudents();
+    }
+    document.getElementById('addFullPay').onclick = () => { students.push({ type: 'fullPay' }); renderStudents(); };
+    document.getElementById('addAid').onclick = () => { students.push({ type: 'aid', aidAward: 0 }); renderStudents(); };
+    document.getElementById('addHS1').onclick = () => { students.push({ type: 'hs1' }); renderStudents(); };
+    document.getElementById('addHS2').onclick = () => { students.push({ type: 'hs2' }); renderStudents(); };
+
+    // --- Core calc
+    function update() {
+      const tuition = +tuitionEl.value || 0;
+      const aidBudget = +aidBudgetEl.value || 0;
+      const target = +targetEl.value || 0;
+
+      let revenue = 0;
+      let aidUsed = 0;
+
+      students.forEach(s => {
+        if (s.type === 'fullPay') {
+          revenue += tuition;
+        } else if (s.type === 'aid') {
+          const award = Math.min(tuition, Math.max(0, Number(s.aidAward) || 0));
+          aidUsed += award;
+          revenue += (tuition - award);
+        } else if (s.type === 'hs1') {
+          revenue += 1500;
+        } else if (s.type === 'hs2') {
+          revenue += 2 * 1500;
+        }
+      });
+
+      const fpe = tuition > 0 ? revenue / tuition : 0;
+      const gapFPE = Math.max(0, target - fpe);
+      const gapRevenue = Math.max(0, target * tuition - revenue);
+      const aidRemaining = aidBudget - aidUsed;
+
+      revenueEl.textContent = "Total Revenue: $" + Math.round(revenue).toLocaleString();
+      aidUseEl.innerHTML = `Aid used: $${Math.round(aidUsed).toLocaleString()} / Remaining: $${Math.max(0, Math.round(aidRemaining)).toLocaleString()}`;
+      fpeEl.textContent = "Full-Pay Equivalents (FPE): " + fpe.toFixed(2);
+      gapEl.textContent = gapFPE > 0
+        ? `Gap to target: ${gapFPE.toFixed(2)} FPE ($${Math.round(gapRevenue).toLocaleString()})`
+        : "On or above target!";
+
+      if (aidRemaining < 0) {
+        aidWarningEl.className = 'stat warn';
+        aidWarningEl.textContent = `⚠️ Aid over-allocated by $${Math.abs(Math.round(aidRemaining)).toLocaleString()}. Reduce awards or increase the aid pool.`;
+      } else {
+        aidWarningEl.className = 'stat ok';
+        aidWarningEl.textContent = 'Aid budget is within limits.';
+      }
+    }
+
+    // --- Global inputs
+    tuitionEl.addEventListener('input', () => { renderStudents(); update(); });
+    aidBudgetEl.addEventListener('input', update);
+    targetEl.addEventListener('input', update);
+
+    // --- First paint
+    renderStudents();
+
+    // Expose removeStudent for inline onclick
+    window.removeStudent = removeStudent;
+  </script>
+</body>
+</html>
